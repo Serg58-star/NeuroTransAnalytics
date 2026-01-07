@@ -1,6 +1,6 @@
 # NeuroTransAnalytics  
 ## Reference Specification & Methodological Guide
-
+Версия README.md на 1:07 08.01.2026
 ---
 
 ## Оглавление
