@@ -1,909 +1,253 @@
-Выдержка из нашего с тобой чата:
-Резюме методики тестирования СЗР.
-
-Документ объединяет все ранее согласованные положения, исправления и конкретные технические артефакты, 
-которые необходимы для согласования разработки и последующей практической работы (импорт базы, анализ, реализация модулей).
- Если в процессе вы обнаружите ошибки — исправим быстро, но теперь работаем уже от «эталона», а не от фрагментов.
-
-Reference Specification v1.0 — кратко
-
-Документ содержит:
-Краткое резюме согласованных принципов (поведение трёх тестов).
-Пошаговые текстовые диаграммы (входы→процесс→выходы) для каждого теста.
-Поведение при исключительных ситуациях (преждевременные / поздние нажатия и повторы).
-Перечень всех переменных и их смысл (структурный codebook).
-Структура таблиц SQLite (SQL-шаблон CREATE TABLE).
-Интерфейсы модулей и их входы/выходы.
-Правила предобработки и вычисления моторного компонента (фиксировано по проекту).
-План дальнейших практических действий и чеклист.
-Ниже — полный текст спецификации.
-
-1. Резюме согласованных принципов (кратко, «тот факт, что важно»)
-
-Все тесты используют предустановленные псевдо-случайные последовательности, зашитые в конфиге (вариант, используемый на практике — T?_SPORT). 
-Эти последовательности — константы теста (визуальный движок), а не аналитический фактор (они не анализируются как источник вариации).
-
-Tst1 (simple / ПЗР)
-— Тестовый показ = единичный круг (лево/центр/право).
-— Предстимульный интервал (ISI) берётся из таблицы (табличный список из 36 значений; ISI — значение в ms, указанное в метаданных для данного стимула).
-— Экспозиция тестового стимула = до нажатия или до MaxRedLight (2000 ms).
-— Нет «троек» фоновых кадров; экран перед тестовым показом — «чистый» (фоновый цвет фиксирован).
-
-Tst2 (color_red)
-— Тестовый сигнал — фиксированный красный круг (RGB фиксирован).
-— Между тестовыми тройками показывается последовательность предтестовых троек (каждая тройка = одновременное появление трёх кругов в предустановленных комбинациях цветов/позиции).
-— ROTATE_PERIOD = 400 ms — время экспозиции каждой предтестовой тройки (то есть тройка показывается 400 ms).
-— ISI = (число предтестовых троек − 1) × 400 ms. (т. е. перед тестовой тройкой показываются N троек; ISI считается по числу предтестовых троек).
-— Тестовая тройка отображается в конце блока; тестовый красный круг находится в тестовой тройке на предустановленной позиции; 
-  экспозиция тестовой тройки основная — тестовый круг экспонируется до нажатия или до MaxRedLight (2000 ms).
-— Параметр circle_sequence в metadata обязателен для Tst2 (описание состава троек).
-
-Tst3 (shift)
-— Тестовый стимул — позиционное событие: смещение одного круга из тестовой тройки (смещение по вертикали: боковые — вверх; центральная позиция — вниз).
-— Тройки и их состав предустановлены в конфиге (строки вида КЖС0 ... и пр.). Каждая тройка экспонируется 400 ms.
-— Тестовый момент — именно движение/смещение тестового круга (время движения ~50 ms); два других круга тестовой тройки остаются неподвижными весь период.
-— ISI = (число предтестовых троек − 1) × 400 ms.
-— Для Tst3 circle_sequence обязателен и содержит коды смещений (концевые цифры 0..3 указывают на параметр сдвига); shift_parameter хранит позицию смещения (1/2/3).
-
-ROTATE_PERIOD — не время появления каждого тестового сигнала, а время экспозиции предтестовой тройки (стандартно 400 ms) — важно в документации выбрать термин «rotate/exposure of pretest triple».
-MinRedLight = 135 ms — порог: если зафиксировано нажатие до этого времени, попытка считается преждевременной и воспроизводится заново.
-MaxRedLight = 2000 ms — максимальная длительность экспозиции тестового сигнала; при нажатии позже чем MaxRedLight попытка считается запоздалой и воспроизводится заново.
-В старой системе: нет применения MAD-очистки/исключений при первичной обработке; реакции >800 ms не отсекались (поэтому MaxRedLight увеличено до 2000 ms).
-test_metadata.py — источник строк последовательностей и метаданных (требуется синхронизация с SQLite; при импорте перенести circle_sequence туда, если нужно).
-
-2. Поведение системы при исключительных ситуациях
-
-Преждевременное нажатие (нажатие < MinRedLight (135 ms) после появления тестовой тройки/теста)
-— Записывается число преждевременных нажатий для этой попытки.
-— ПО немедленно повторяет эту попытку со всеми её атрибутами (same ISI, same stimulus position, same circle sequence, same shift param и т.д.).
-— Повтор считается новой строкой записи в DB, но отмечается флагом trial_repeated и repeat_reason='premature'.
-Запоздалое нажатие / отсутствие нажания в MaxRedLight (>= MaxRedLight)
-— Считается «пропуск/missed» — фиксируется как missed_count для данной попытки.
-— Попытка также повторяется немедленно со всеми атрибутами; логируется repeat_reason='late_or_timeout'.
-Некорректные последовательности/ошибки отрисовки — фиксируются в raw_event_log для отладки; не влияют на повторение (повтор осуществляется только в случаях выше).
-Повторения не меняют псевдо-случайную последовательность: повтор — это повтор именно той же записи (технически: попытка заново, тот же stimulus_number).
-
-3. Пошаговые текстовые диаграммы (sequence of events)
-3.1 Tst1 (simple) — sequence
-
-Выбор следующего stimulus_number по конфигу T1_SPORT (псевдо-случайная запись с таблицы 1..36).
-
-Применить prestimulus_interval (конкретное значение ms из metadata для данного номера). Во время ISI экран — фоновый цвет (фиксированный).
-
-Показать одиночный круг в предустановленной позиции (лево/центр/право) — тестовый стимул.
-
-Начать учёт времени: test_shown_timestamp.
-
-До MaxRedLight ждать нажатия.
-— Если нажатие < MinRedLight → логировать premature, повторить ту же попытку.
-— Если нажатие в [MinRedLight, MaxRedLight) → записать RT (ms).
-— Если нет нажатия до MaxRedLight → логировать missed, повторить попытку.
-
-Перейти к следующему stimulus_number.
-
-3.2 Tst2 (color_red) — sequence
-
-Выбрать блок предтестовых троек (N троек; N определяется конфигом; последняя тройка — тестовая тройка содержащая тестовый красный круг в предустановленной позиции).
-Для i=1..N-1: показать предтестовую тройку (все 3 круга одновременно) — экспозиция ROTATE_PERIOD (400 ms).
-Показать тестовую тройку (400 ms отображение тройки; тестовый красный круг также отображается и является тестовым сигналом).
-Начать учёт времени от появления тестовой тройки (test_shown_timestamp). Тестовый красный круг экспонируется до нажатия или до MaxRedLight (2000 ms).
-Обработка нажатий и повторы — как в Tst1.
-Запись всех данных по попытке и переход к следующему stimulus_number.
-
-3.3 Tst3 (shift) — sequence
-
-Выбрать блок предтестовых троек (N, из конфига). Показать N-1 троек с ROTATE_PERIOD (400 ms).
-Показать тестовую тройку (она отображается как неподвижная конфигурация из трёх кругов).
-Через фиксированную задержку (в пределах экспозиции) назначенный тестовый круг совершает вертикальное смещение за ~50 ms (боковые — вверх; центр — вниз) и возвращается; это — тестовый момент.
-RT измеряется от начала движения/смещения тестового круга. Длительность всей тестовой тройки фиксирована/минимальна; движение является основным стимулом.
-Обработка нажатий и повторы — как выше.
-Запись и переход.
-
-4. Полный структурный codebook (переменные, типы, смысл)
-
-Ниже перечислены поля, которые рекомендуется хранить для каждой попытки (table trials) и для metadata/system (таблицы test_metadata и testing_system_parameters). Типы SQL — ориентированы на SQLite.
-
-4.1 Переменные записи попытки (trials)
-
-trial_id INTEGER PRIMARY KEY AUTOINCREMENT — уникальный идентификатор записи.
-session_id TEXT — идентификатор сеанса тестирования (связь с users/boxbase).
-user_id TEXT / INTEGER — ИД пациента (соответствие таблице users).
-test_type TEXT — one of ('simple','color_red','shift').
-config_variant TEXT — например 'T1_SPORT' / 'T2_SPORT' / 'T3_SPORT'.
-stimulus_number INTEGER — 1..36 (позиция в метаданных).
-stimulus_index_in_sequence INTEGER — порядковый номер внутри сеанса (1..POKAZ_COUNT).
-prestimulus_interval_ms INTEGER — ISI для данной попытки (ms). Важно: для Tst1 — берётся как конкретное число из metadata; для Tst2/Tst3 — (кол-во предтестовых троек − 1) × 400 ms.
-rotate_period_ms INTEGER — значение ROTATE_PERIOD, обычно 400.
-exposure_non_test_ms INTEGER — 400 (в Tst2/Tst3 это экспозиция каждой предтестовой тройки).
-exposure_test_max_ms INTEGER — MaxRedLight (2000).
-color TEXT — цвет тестового круга ('red','green','blue').
-position TEXT — 'left'|'center'|'right'.
-circle_sequence_ref TEXT — ссылка/идентификатор на circle_sequence (тип: TEXT). Для Tst1 может быть NULL; для Tst2/Tst3 обязательно.
-shift_parameter INTEGER — для Tst3 значение 0..3 (0 — нет смещения, 1..3 — 좌/центр/право). NULL если не применяется.
-movement_expected BOOLEAN — для Tst3 true.
-test_shown_timestamp TEXT / DATETIME — время начала тестового показа (ISO).
-movement_onset_timestamp TEXT / DATETIME — для Tst3 время начала смещения. NULL для Tst1/Tst2.
-response_timestamp TEXT / DATETIME — время нажатия. NULL если не было.
-RT_ms INTEGER — реактивное время в ms (рассчитывается как response_timestamp - movement_onset_timestamp для Tst3; или response_timestamp - test_shown_timestamp для Tst1/Tst2). NULL если нет.
-premature_presses_count INTEGER — число нажаний, зафиксированных до MinRedLight для этой попытки (0..n).
-missed_count INTEGER — 1 если был таймаут/не было нажания до MaxRedLight (реально — чаще 0 or 1; но полезно хранить целое число, т.к. запись может повторяться).
-trial_repeated BOOLEAN — true, если попытка была повтором предыдущей (см. repeat_reason).
-repeat_reason TEXT — 'premature' | 'late_or_timeout' | NULL.
-raw_event_log TEXT — детализированный лог событий (для отладки).
-operator_id TEXT — идентификатор оператора (если применимо).
-device_info TEXT — идентификатор PC/контроллера.
-notes TEXT — свободный текст.
-
-4.2 Таблица test_metadata (метаданные стимулов)
-
-test_type TEXT
-stimulus_number INTEGER
-color TEXT
-position TEXT
-prestimulus_interval INTEGER
-circle_sequence TEXT — строка с кодом троек (для Tst2/Tst3 обязательно; для Tst1 NULL)
-shift_parameter INTEGER — как в test_metadata.py (NULL если не применимо)
-PRIMARY KEY (test_type,stimulus_number)
-
-4.3 Таблица testing_system_parameters
-
-parameter_name TEXT PRIMARY KEY
-parameter_value TEXT
-
-4.4 Таблица users (структура минимальная — всё, что нужно для связи)
-
-(вы уже имеете users/boxbase; ниже — только шаблон для согласования с trials)
-user_id INTEGER PRIMARY KEY
-surname TEXT
-name TEXT
-birth_date DATE
-sex TEXT
-notes TEXT
-
-4.5 Пример SQL-шаблон (SQLite)
-
-Ниже — минимальный набор CREATE TABLE; используйте это как шаблон для загрузки/сопоставления с вашей реальной базой:
-
-CREATE TABLE IF NOT EXISTS test_metadata (
-    test_type TEXT NOT NULL,
-    stimulus_number INTEGER NOT NULL,
-    color TEXT,
-    position TEXT,
-    prestimulus_interval INTEGER,
-    circle_sequence TEXT,
-    shift_parameter INTEGER,
-    PRIMARY KEY (test_type, stimulus_number)
-);
-
-CREATE TABLE IF NOT EXISTS testing_system_parameters (
-    parameter_name TEXT PRIMARY KEY,
-    parameter_value TEXT
-);
-
-CREATE TABLE IF NOT EXISTS users (
-    user_id INTEGER PRIMARY KEY,
-    surname TEXT,
-    name TEXT,
-    birth_date TEXT,
-    sex TEXT,
-    notes TEXT
-);
-
-CREATE TABLE IF NOT EXISTS trials (
-    trial_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id TEXT,
-    user_id INTEGER,
-    test_type TEXT,
-    config_variant TEXT,
-    stimulus_number INTEGER,
-    stimulus_index_in_sequence INTEGER,
-    prestimulus_interval_ms INTEGER,
-    rotate_period_ms INTEGER,
-    exposure_non_test_ms INTEGER,
-    exposure_test_max_ms INTEGER,
-    color TEXT,
-    position TEXT,
-    circle_sequence_ref TEXT,
-    shift_parameter INTEGER,
-    movement_expected INTEGER,
-    test_shown_timestamp TEXT,
-    movement_onset_timestamp TEXT,
-    response_timestamp TEXT,
-    RT_ms INTEGER,
-    premature_presses_count INTEGER DEFAULT 0,
-    missed_count INTEGER DEFAULT 0,
-    trial_repeated INTEGER DEFAULT 0,
-    repeat_reason TEXT,
-    raw_event_log TEXT,
-    operator_id TEXT,
-    device_info TEXT,
-    notes TEXT
-);
-
-
-(Дополнительно: индексировать user_id, test_type, stimulus_number, test_shown_timestamp.)
-
-5. Правила предобработки и вычисления моторного компонента
-
-(Согласно ранее согласованным пунктам в Model Set Context)
-
-В старой системе тестирования теппинг-тест - не применялся,
-ПОэтому вычитание моторного комонента - не осуществляется.
-
-Применение к историческим данным: в старых данных MAD не применялся; при ретроспективной обработке — решение за вами:
-применять MAD для унификации метрик или сохранять «сырой» RT и добавлять колонку RT_mad_filtered для сравнения.
-
-6. Аналитические группировки (ретроспективно и для будущих тестов)
-
-Ретроспективные группировки (для 2000 тестов):
-P-Центр = (Красный_Центр + Зелёный_Центр)
-P-Периферия = (Красный_Периферия + Зелёный_Периферия)
-K-Центр = (Синий_Центр)
-K-Периферия = (Синий_Периферия)
-
-Агрегации, которые нужно хранить/вычислять:
-median_RT и mean_RT по каждой группе, по каждому пациенту, по фазе (в старой однопазовой системе — одна фаза).
-counts: trials, premature_count, missed_count, repeats.
-внутрииспытуемые сравнения (Wilcoxon / медианы) — для малых n.
-
-7. Интерфейсы модулей (входы / выходы)
-7.1 TestMetadataManager (в коде)
-
-Входы: ничего (запускается с встроенным test_metadata.py) и/или db_connection для загрузки.
-Выходы: объекты TestMetadata и StimulusMetadata.
-Методы: get_test_metadata(test_type), get_stimulus_metadata(test_type, stimulus_number), load_from_database(db_connection), get_system_parameter(param).
-
-7.2 VisualEngine (отрисовка + синхронизация)
-
-Входы: StimulusMetadata, system parameters (ROTATE_PERIOD, BoxingInterval, MaxRedLight, MinRedLight), control flags.
-Поведение: обеспечить точную временную отрисовку (предтестовые тройки, тестовую тройку, движение).
-Выходы: временные метки test_shown_timestamp, movement_onset_timestamp, event_log (raw).
-
-7.3 InputController (кнопки мыши/клавиши)
-
-Входы: физические события от мыши/клава.
-Поведение: детектировать нажатия, фильтровать нажатия по MinRedLight и MaxRedLight, считать преждевременные/поздние.
-Выходы: response_timestamp, press_type (premature/valid/late).
-
-7.4 TrialManager
+# NeuroTransAnalytics  
+## Reference Specification & Methodological Guide
 
-Входы: управляющая логика (следующий trial), TestMetadataManager, VisualEngine, InputController.
-Поведение: запуск и контроль попытки, логика повторов.
-Выходы: запись в trials таблицу.
+---
 
-7.5 Analysis module (testing_statistics)
+## Оглавление
 
-Входы: таблица trials, таблица users, system params.
-Функции: расчёт motor_delay, RT filtering (MAD), агрегаты по группам (P/K), статистические тесты.
-Выходы: аналитические таблицы, графики, отчёты.
+1. Назначение проекта  
+2. Общая концепция тестирования  
+3. Описание тестов зрительных реакций  
+   3.1. Tst1 — Simple Reaction  
+   3.2. Tst2 — Color (Red) Reaction  
+   3.3. Tst3 — Shift / Movement Reaction  
+4. Обработка исключительных ситуаций  
+5. Архитектура данных  
+   5.1. Общая логика хранения  
+   5.2. Таблица users / patients  
+   5.3. Таблица trials и производные структуры  
+   5.4. Метаданные тестов и параметры системы  
+6. Правила расчёта реактивного времени (RT)  
+7. Предобработка и фильтрация данных  
+8. SQL-представления (VIEW) для аналитики  
+9. Канальная и латерализационная группировка  
+10. Агрегаты и аналитические показатели  
+11. Python-pipeline для анализа  
+12. Контроль качества данных (QC)  
+13. Форматы финальных выгрузок  
+14. Практический чек-лист анализа  
+15. Статус документа и принципы развития
 
-8. Дополнительные замечания/исправления (встроить в кодовую базу и документацию)
+---
 
-Ж1 — обозначение теперь зелёный (замена желтого → green). Везде записать: Ж -> green. 
-При импорте строк 1_c = Ж1 -> color='green', position='left'.
-В test_metadata.py — хранится рабочая версия последовательностей для T?_SPORT. 
-При импорте в SQLite — перенести circle_sequence как текстовую колонку, если вы хотите ускорить верификацию.
-Колонки premature_presses_count и missed_count — в DB хранить как integer (количество), а не boolean.
-Не создавать автоматические предположения о применении MAD/фильтров для старых данных — сохранить «сырой» RT и хранить результирующие колонки отдельно.
+## 1. Назначение проекта
 
-9. Чеклист / План практических действий (короткий)
+**NeuroTransAnalytics** — исследовательский и аналитический проект, предназначенный для
+структурированной обработки, анализа и интерпретации данных тестирования скоростей зрительных реакций (СЗР).
 
-Вы утверждаете Reference Specification v1.0 (этот документ).
-Я генерирую миграционный SQL-скрипт для импорта test_metadata.py (строки StimulusMetadata) в таблицу test_metadata. (Готов к генерации немедленно.)
-Вы передаёте SQLite файл (или даёте дамп/экспорт); я проверяю соответствие столбцов users и boxbase к шаблону trials и предложу миграции/сопоставления.
-Запускаем скрипт: импорт метаданных → добавление полей circle_sequence (если требуется) → валидация 10 случайных записей (сопоставление timestamp/логов с expected).
-Подготовка набора ETL-скриптов: извлечение, предобработка (MAD опционально), агрегации P/K.
-Проектирование и реализация первых аналитических отчётов (индивидуальные графики для тестов, boxplots по комбинациям цвет×позиция).
+Проект ориентирован на:
+- клинический и функциональный анализ;
+- непараметрическую статистику;
+- фазовую модель тестирования;
+- последующую автоматизацию логической интерпретации данных.
 
-10. Приложение: упрощённая логическая схема модулей (текст):
-[User Interface / Hardware] --> [InputController] --> [TrialManager] --> [VisualEngine]
-                                     |                          |
-                                     |                          v
-                                     |                    test_shown_timestamp, movement_onset_timestamp
-                                     v
-                                 DB (trials) <--- [TrialManager writes] <--- [VisualEngine, InputController]
-                                     ^
-                                     |
-                          [TestMetadataManager]  (provides metadata for trials)
-                                     ^
-                                     |
-                          test_metadata.py  (source)  OR  test_metadata table in SQLite
+Данный документ является **reference-спецификацией**, а не пользовательской инструкцией.
 
+---
 
+## 2. Общая концепция тестирования
 
-Мое замечание по выше приведенному тексту:
+Тестирование основано на регистрации времени реакции (RT, ms) в ответ на визуальные стимулы
+при строго контролируемых условиях предъявления.
 
-В написанном тобой документе имеется информация, возможно, необходимая для создания программы тестирования, 
-но не нужная когда данные тестирования уже получены, сохранены в базе и требуется только обработка этих данных. 
-Есть описанный тест, есть позиция тестового сигнала в тесте и его характеристики. 
-Требуется обработать эти данные и получить обобщающие результаты как по отдельным тестам, так и взаимодействию тестов в составе батареи.
-Ты, почти не ознакомившись с уже проделанной работой, пытаешься что-то перестраивать, а ведь таблицы уже загружены, 
-некие SQLite базы сформированы. Ожидалось, что ты сформируешь документ, который поможет тебе понять логику существующих данных, но я этого не вижу в созданном документе.
+Основные принципы:
+- фиксированная структура попыток;
+- учёт преждевременных и пропущенных реакций;
+- разделение тестов по типу задействованных зрительных механизмов;
+- приоритет внутриличностного анализа.
 
-Твой ответ:
-Понял вас — нужна целевая, ориентированная на обработку уже собранных данных спецификация / руководство, а не проектировочная документация для движка тестирования. Ниже — компактный, практичный и исчерпывающий документ, который:
+---
 
-объясняет логику полей, которые уже есть в базе (и как их использовать для анализа);
+## 3. Описание тестов зрительных реакций
 
-однозначно фиксирует правила очистки и выбора «валидной» попытки при повторах/преждевременных/тайм-аутах;
+### 3.1. Tst1 — Simple Reaction
 
-даёт готовые SQL-представления (views) и SQL-запросы для типичных задач в ETL;
+- одиночный визуальный стимул;
+- фиксированный предстимульный интервал (ISI);
+- измерение RT как разности между моментом появления стимула и нажатием.
 
-содержит готовые блоки Python (pandas + scipy) для статистики и визуализации;
+Назначение:
+оценка базовой зрительно-моторной реакции.
 
-даёт план отчётов (какие метрики, какие графики) и контроль качества/валидации данных.
+---
 
-Документ написан так, чтобы вы могли запустить ETL/анализ сразу на существующей SQLite-базе (при условии, что таблицы users, boxbase / trials и test_metadata существуют — названия можно подставить).
+### 3.2. Tst2 — Color (Red) Reaction
 
-1. Цель документа
+- серия предтестовых стимулов, сгруппированных в тройки;
+- тестовый стимул — красный круг;
+- ISI формируется последовательностью троек.
 
-Дать чёткие инструкции и готовые технические артефакты для превращения уже записанных сырых данных тестирования в корректные аналитические таблицы и итоговые отчёты (по отдельным тестам и по батарее в целом).
+Назначение:
+оценка реакций на цветовой стимул при изменённой когнитивной нагрузке.
 
-2. Основные предпосылки и соглашения (которые я принимаю как истину)
+---
 
-В базе уже есть записи попыток (таблица trials или boxbase) и таблица метаданных стимулов test_metadata (экспорт из test_metadata.py или импорт).
+### 3.3. Tst3 — Shift / Movement Reaction
 
-В test_metadata для каждого test_type/stimulus_number находится поле prestimulus_interval (ms) — используем его как первичный источник ISI для Tst1; для Tst2/Tst3 его также можно использовать, потому что в метаданных уже записаны соответствующие значения.
+- динамическая последовательность;
+- смещение тестового круга;
+- RT вычисляется относительно момента начала движения.
 
-В таблицах присутствуют колонки (или их можно восстановить из логов): response_timestamp, test_shown_timestamp (или movement_onset_timestamp для Tst3), premature_presses_count (INTEGER), missed_count (INTEGER), trial_repeated (BOOLEAN/INTEGER) и repeat_reason (TEXT). Если какие-то поля отсутствуют — ниже есть SQL-шаблоны для вычисления/восстановления.
+Назначение:
+оценка реакции на движение и перераспределение внимания.
 
-Повтор — это заменяющая попытка: при преждевременном/таймаутном событии та же попытка выполняется заново с теми же атрибутами; аналитически мы хотим иметь только «итоговую» попытку (валидную) для каждой позиции в сессии/стимула.
+---
 
-Если что-то из этого не так в вашей базе — всё равно следуйте документу: соответствующие SQL-представления можно адаптировать к реальным названиям столбцов.
+## 4. Обработка исключительных ситуаций
 
-3. Правила отбора и очистки записей (decision rules) — единственно однозначные
+Правила регистрации попыток:
 
-Эти правила превращают сырые записи попыток в «валидные» результаты, готовые для агрегации.
+- **преждевременное нажатие**  
+  RT < MinRedLight → попытка повторяется;
 
-3.1 Определение валидной попытки для (user_id, session_id, test_type, stimulus_number)
+- **запоздалое нажатие**  
+  RT > MaxRedLight → попытка считается пропущенной;
 
-Сгруппировать все записи по (user_id, session_id, test_type, stimulus_number). Это — «семейство попыток» для одного заданного стимула (включает первичную попытку и возможные повторы).
+- причины повторов и пропусков логируются явно.
 
-Если в группе есть хотя бы одна попытка с RT_ms в пределах [MinRedLight, MaxRedLight) и premature_presses_count = 0 и missed_count = 0, выбрать первую такую запись по времени (или ту, у которой trial_repeated = 0 и repeat_reason is NULL, если это удобно).
+---
 
-Если нет валидной записи (п.2), но есть запись(и) с trial_repeated = 1 и repeat_reason='premature' или 'late_or_timeout', то: выбрать последнюю попытку из этой группы (поскольку по правилам движка повтор — это повтор той же попытки; итоговая валидная попытка обычно — после повторов).
+## 5. Архитектура данных
 
-Если нет ни одной пригодной записи (все — premature / missed и не повторялись), пометить «нет валидного RT» (RT_ms = NULL, status='no_valid'), и сохранить суммарные счётчики premature_presses_count и missed_count как агрегированные по группе.
+### 5.1. Общая логика хранения
 
-Взять из выбранной записи все значения атрибутов: color, position, prestimulus_interval_ms (если в trials нет — берём из test_metadata), circle_sequence_ref, shift_parameter.
+Данные организованы в реляционной структуре с выделением:
+- сырых попыток;
+- метаданных тестов;
+- параметров системы;
+- агрегированных аналитических результатов.
 
-Примечание: логика выше отражает вашу практику: повтор — не новая независимая попытка, а повтор «той же» попытки до корректного результата. Поэтому при агрегации нужно опираться на итог (selected) попытку.
+---
 
-3.2 Правка и вычисление RT
+### 5.2. Таблица users / patients
 
-Если есть movement_onset_timestamp для Tst3 — RT = response_timestamp - movement_onset_timestamp.
+Содержит паспортно-демографические данные:
+- идентификатор пациента;
+- имя, фамилия;
+- год рождения;
+- пол;
+- дата регистрации;
+- флаг активности.
 
-Если нет movement_onset_timestamp и есть test_shown_timestamp — для Tst1/Tst2 RT = response_timestamp - test_shown_timestamp.
+Используется исключительно как связующая сущность.
 
-Все времена в ms; округлять до ближайшего целого.
+---
 
-Если RT_ms < 0 — отметить как «артефакт» и исключить / пометить status='artifact'.
+### 5.3. Таблица trials и производные структуры
 
-3.3 Описание поведения при premature/missed
+Таблица `trials` включает:
+- идентификаторы пациента и сессии;
+- тип теста;
+- номер стимула;
+- временные метки;
+- значения RT;
+- флаги преждевременных и пропущенных реакций.
 
-premature_presses_count и missed_count — целые числа. Использовать их как метрики качества выполнения (вместо булевых флагов).
+---
 
-Повторявшиеся попытки не удалять из raw; удалять только в создаваемом представлении clean_trials (см. ниже).
+### 5.4. Метаданные тестов и параметры системы
 
-4. SQL-артефакты — готовые представления и проверки
+- `test_metadata` — параметры стимулов;
+- `testing_system_parameters` — глобальные настройки эксперимента.
 
-Ниже — набор SQL-скриптов/VIEW-ов, которые создадут «чистую» рабочую таблицу и дадут основные контрольные отчёты. Подставьте реальные имена таблиц, если они иные.
+---
 
-Предположение: исходная таблица попыток называется trials_raw, таблица метаданных test_metadata. Если названия другие — замените.
+## 6. Правила расчёта реактивного времени (RT)
 
-4.1 — view: trials_with_rt
+RT вычисляется в зависимости от типа теста:
+- Tst1, Tst2 — response_timestamp − stimulus_timestamp;
+- Tst3 — response_timestamp − movement_onset_timestamp.
 
-(вычисляет RT, помечает тип теста и простые флаги)
+Отрицательные или нереалистичные значения исключаются.
 
-CREATE VIEW IF NOT EXISTS trials_with_rt AS
-SELECT
-  r.*,
-  COALESCE(r.RT_ms,
-    CASE
-      WHEN r.movement_onset_timestamp IS NOT NULL AND r.response_timestamp IS NOT NULL
-        THEN CAST((strftime('%s', r.response_timestamp) - strftime('%s', r.movement_onset_timestamp)) * 1000.0 AS INTEGER)
-      WHEN r.test_shown_timestamp IS NOT NULL AND r.response_timestamp IS NOT NULL
-        THEN CAST((strftime('%s', r.response_timestamp) - strftime('%s', r.test_shown_timestamp)) * 1000.0 AS INTEGER)
-      ELSE NULL
-    END
-  ) AS computed_RT_ms,
-  CASE
-    WHEN r.test_type = 'shift' THEN 1 ELSE 0
-  END AS is_shift
-FROM trials_raw r;
+---
 
+## 7. Предобработка и фильтрация данных
 
-Примечание: strftime('%s', ...) даёт секунды UNIX; умножаем на 1000.
+- исключение невалидных попыток;
+- выбор предпочтительной попытки при повторах;
+- подготовка «чистого» набора данных для анализа.
 
-4.2 — view: grouped_attempts
+---
 
-(агрегирует каждую «семью попыток» и выбирает candidate_attempt согласно правилам 3.1)
+## 8. SQL-представления (VIEW) для аналитики
 
-Это более длинный фрагмент: общая идея — выбрать «preferred_attempt_id» для каждой (user, session, test_type, stimulus_number). Ниже — пример с подзапросами.
+Используются представления:
+- `trials_with_rt`;
+- `preferred_attempts`;
+- `clean_trials`.
 
-CREATE VIEW IF NOT EXISTS preferred_attempts AS
-WITH grouped AS (
-  SELECT
-    user_id, session_id, test_type, stimulus_number,
-    MIN(test_shown_timestamp) as first_shown_ts
-  FROM trials_with_rt
-  GROUP BY user_id, session_id, test_type, stimulus_number
-),
-valids AS (
-  SELECT t.*
-  FROM trials_with_rt t
-  WHERE t.computed_RT_ms IS NOT NULL
-    AND t.computed_RT_ms >= (SELECT parameter_value FROM testing_system_parameters WHERE parameter_name='MinRedLight') 
-    AND t.computed_RT_ms < (SELECT parameter_value FROM testing_system_parameters WHERE parameter_name='MaxRedLight')
-    AND coalesce(t.premature_presses_count,0) = 0
-    AND coalesce(t.missed_count,0) = 0
-)
-SELECT
-  g.user_id, g.session_id, g.test_type, g.stimulus_number,
-  -- choose best: first valid by test_shown_ts if exists, else last attempt in group
-  COALESCE( (SELECT id FROM valids v WHERE v.user_id=g.user_id AND v.session_id=g.session_id AND v.test_type=g.test_type AND v.stimulus_number=g.stimulus_number ORDER BY v.test_shown_timestamp LIMIT 1),
-            (SELECT id FROM trials_with_rt t2 WHERE t2.user_id=g.user_id AND t2.session_id=g.session_id AND t2.test_type=g.test_type AND t2.stimulus_number=g.stimulus_number ORDER BY t2.test_shown_timestamp DESC LIMIT 1)
-          ) AS preferred_trial_id
-FROM grouped g;
+Они служат единым источником для аналитических запросов.
 
+---
 
-После этого можно создать view clean_trials как join trials_with_rt <> preferred_attempts и включить туда все нужные колонки (RT, counts, metadata fields).
+## 9. Канальная и латерализационная группировка
 
-4.3 — view: clean_trials (финишное представление)
-CREATE VIEW IF NOT EXISTS clean_trials AS
-SELECT
-  t.*,
-  m.circle_sequence,
-  m.prestimulus_interval as metadata_prestimulus_interval,
-  m.shift_parameter as metadata_shift_parameter
-FROM trials_with_rt t
-JOIN preferred_attempts p ON p.preferred_trial_id = t.id
-LEFT JOIN test_metadata m ON m.test_type = t.test_type AND m.stimulus_number = t.stimulus_number;
+Данные группируются по:
+- центральному и периферическому полю;
+- парво- и коньо-ориентированным условиям.
 
+Используется для трактовой интерпретации.
 
-clean_trials — та таблица, с которой далее работают аналитические скрипты.
+---
 
-4.4 — простая проверка целостности
--- сколько записей по test_type
-SELECT test_type, COUNT(*) FROM trials_raw GROUP BY test_type;
+## 10. Агрегаты и аналитические показатели
 
--- сколько уникальных пользователей, сессий
-SELECT COUNT(DISTINCT user_id) as n_users, COUNT(DISTINCT session_id) as n_sessions FROM trials_raw;
+Рекомендуемые показатели:
+- число валидных попыток;
+- медиана RT;
+- среднее RT;
+- MAD;
+- доля RT > 800 мс;
+- показатели стабильности.
 
--- количество групп (user, session, test, stim) с >1 попыткой (повторы)
-SELECT COUNT(*) FROM (
-  SELECT user_id, session_id, test_type, stimulus_number, COUNT(*) c
-  FROM trials_raw
-  GROUP BY user_id, session_id, test_type, stimulus_number
-  HAVING c > 1
-);
+---
 
-5. Канальные группировки (P/K/прочие) — точная схема перекодировки
+## 11. Python-pipeline для анализа
 
-Использовать эту таблицу для создания поля channel или pathway в clean_trials.
+Используются:
+- pandas;
+- numpy;
+- scipy.
 
-Правило картирования (строгое и простое):
-Если (color IN ('red','green')) AND position = 'center' → channel = 'P_center'
-Если (color IN ('red','green')) AND position IN ('left','right') → channel = 'P_periphery'
-Если (color = 'blue') AND position = 'center' → channel = 'K_center'
-Если (color = 'blue') AND position IN ('left','right') → channel = 'K_periphery'
+Предоставляются шаблоны загрузки данных, расчёта агрегатов и визуализации.
 
-(Вы можете изменить это правило под ваши физиологические гипотезы — правило выше соответствует обсуждённой вами схеме.)
+---
 
-SQL-фрагмент для вычисления:
+## 12. Контроль качества данных (QC)
 
-ALTER TABLE clean_trials ADD COLUMN channel TEXT;
-UPDATE clean_trials
-SET channel = CASE
-  WHEN color IN ('red','green') AND position = 'center' THEN 'P_center'
-  WHEN color IN ('red','green') AND position IN ('left','right') THEN 'P_periphery'
-  WHEN color = 'blue' AND position = 'center' THEN 'K_center'
-  WHEN color = 'blue' AND position IN ('left','right') THEN 'K_periphery'
-  ELSE 'other'
-END;
+Проверяется:
+- целостность временных меток;
+- частота повторов;
+- распределения RT;
+- наличие систематических артефактов.
 
-6. Рекомендованные агрегаты и метрики (что именно считать)
+---
 
-Для каждого пациента (и для группы) по каждому test_type и по каждому каналу:
+## 13. Форматы финальных выгрузок
 
-n_trials — число валидных попыток (после отбора).
-n_repeats_total — суммарное число повторов (по trial_repeated/agg).
-n_premature_total — сумма premature_presses_count.
-n_missed_total — сумма missed_count.
-median_RT_ms, mean_RT_ms, sd_RT_ms.
-MAD_RT_ms — медианное абсолютное отклонение RT (используется как robust spread).
-percent_RT_gt_800ms — доля RT > 800 ms.
-percent_RT_gt_1500ms, percent_missed и т.д.
-within_subject_CV (коэффициент вариации по RT) = sd / mean.
-Для longitudinal/phase comparisons (если есть поле phase) — разницы между фазами.
+Рекомендуемые выходные файлы:
+- `patients_summary.csv`;
+- `trial_level_clean.csv`.
 
-SQL-пример агрегата по пользователю и каналу:
+---
 
-SELECT user_id, channel,
-  COUNT(*) as n_trials,
-  SUM(premature_presses_count) as n_premature,
-  SUM(missed_count) as n_missed,
-  AVG(computed_RT_ms) as mean_RT,
-  (SELECT percentile FROM some_udf ?) as median_RT -- лучше через pandas
-FROM clean_trials
-GROUP BY user_id, channel;
+## 14. Практический чек-лист анализа
 
+1. Проверка схемы и VIEW  
+2. Предобработка данных  
+3. QC  
+4. Расчёт агрегатов  
+5. Статистический анализ  
+6. Интерпретация  
 
-(Практически: вычисление медианы и MAD проще и точнее делать в Python/pandas.)
+---
 
-7. Python: готовые блоки для статистики и визуализации
+## 15. Статус документа и принципы развития
 
-Ниже — примерный пайплайн на pandas + scipy для анализа и визуализаций. (Вы можете запустить в Jupyter, скриптах.)
+Данный README:
+- является живым документом;
+- отражает актуальное состояние методологии;
+- дополняется по мере развития проекта;
+- не фиксирует промежуточные гипотезы без формализации.
 
-7.1 Загрузка данных (sqlite → pandas)
-import sqlite3
-import pandas as pd
-from scipy import stats
-import numpy as np
-
-con = sqlite3.connect('your.db')
-clean = pd.read_sql_query('SELECT * FROM clean_trials', con, parse_dates=['test_shown_timestamp','movement_onset_timestamp','response_timestamp'])
-meta = pd.read_sql_query('SELECT * FROM test_metadata', con)
-
-7.2 Вычисления: медиана, MAD, доли
-def mad(x):
-    med = np.nanmedian(x)
-    return np.nanmedian(np.abs(x - med))
-
-agg = clean.groupby(['user_id','test_type','channel']).computed_RT_ms.agg(['count','median','mean','std']).reset_index()
-# добавим mad
-mad_df = clean.groupby(['user_id','test_type','channel']).computed_RT_ms.apply(mad).reset_index(name='mad')
-agg = agg.merge(mad_df, on=['user_id','test_type','channel'])
-# проценты > 800 ms
-pct = clean.assign(gt800 = clean.computed_RT_ms > 800).groupby(['user_id','test_type','channel']).gt800.mean().reset_index(name='pct_gt800')
-agg = agg.merge(pct, on=['user_id','test_type','channel'])
-
-7.3 Попарные внутрипациентные тесты (Wilcoxon)
-
-Допустим, хотим сравнить K_periphery vs K_center по RT внутри пациентов:
-
-from scipy.stats import wilcoxon
-
-results = []
-for user, g in clean.groupby('user_id'):
-    a = g.loc[g.channel=='K_periphery','computed_RT_ms'].dropna()
-    b = g.loc[g.channel=='K_center','computed_RT_ms'].dropna()
-    # require paired samples: тут может потребоваться согласование по порядку/парам; проще — использовать независимый тест если не парные
-    if len(a)>=4 and len(b)>=4:
-        # use Mann-Whitney U for independent or wilcoxon if paired
-        stat, p = stats.mannwhitneyu(a, b, alternative='two-sided')
-        results.append((user, len(a), len(b), stat, p))
-
-
-(Выбор теста: при n мал — непараметрические тесты; если внутри-парные измерения совпадают по индексу — Wilcoxon signed-rank.)
-
-7.4 Визуализация (boxplots, stripplots, per-subject)
-
-Используйте matplotlib (требование для графиков в проекте): boxplots per channel, per test_type.
-
-import matplotlib.pyplot as plt
-plt.figure(figsize=(8,5))
-clean.boxplot(column='computed_RT_ms', by=['channel'])
-plt.title('RT by channel')
-plt.ylabel('RT (ms)')
-plt.show()
-
-
-Индивидуальные графики: для каждого пациента строить boxplot по 6 комбинациям (Red_Center, Red_Periph, Green_Center, ...), как вы просили в ранних сообщениях.
-
-8. Отчёт: минимальный набор выводов, который давать по каждому пациенту и по когорте
-8.1 По пациенту (индивидуальный отчёт)
-
-Таблица: количество валидных попыток, повторов, premature_count, missed_count по тестам.
-Таблица: median_RT, mean_RT, mad_RT по каналам (P_center, P_periphery, K_center, K_periphery).
-Графики: boxplots по комбинациям color×position; time series RT по порядку попыток (чтобы увидеть усталение).
-Краткая интерпретация: где замедление выражено сильнее (канал), соотнесение с клиническими данными (если есть).
-
-8.2 По популяции (группа)
-
-Распределения медиан/средних по каналам (violin/box).
-Сравнения (Wilcoxon / Mann-Whitney) между ключевыми парами: K_periph vs K_center, P_center vs P_periph, Red_Center vs Blue_Center и т.д.
-Таблицы корреляций (RT vs возраст, RT vs diagnosis).
-
-9. Контроль качества и валидационные проверки (обязательные)
-
-Перед запуском агрегатов выполнить:
-Проверка целостности: count(test_metadata) == number_of_stimuli_per_test * number_of_tests.
-Проверка временных меток: response_timestamp >= test_shown_timestamp (с некоторым допуском). Сообщать и логировать случаи response_timestamp < test_shown_timestamp.
-Контроль повторов: подсчитать долю групп с >1 попыткой; если это >5–10% — анализировать почему (это может быть нормой).
-Проверка prestimulus_interval: распределение значений, сопоставить с test_metadata.
-Аномалии: выделить пациентов с >30% пропусков или >30% преждевременных — пометить для ручной проверки.
-
-10. Шаблоны итоговых SQL/CSV выгрузок
-
-patients_summary.csv — для каждой user_id: n_sessions, n_trials_total, median_RT per channel, n_premature_total, n_missed_total.
-trial_level_clean.csv — строка на выбранную (preferred) попытку со всеми полями (для внешних ML/регрессионных моделей).
-
-Пример SQL выгрузки patients_summary:
-
-SELECT
-  user_id,
-  COUNT(DISTINCT session_id) as n_sessions,
-  COUNT(*) as n_trials_total,
-  SUM(premature_presses_count) as n_premature_total,
-  SUM(missed_count) as n_missed_total
-FROM clean_trials
-GROUP BY user_id;
-
-
-Далее — джойн с агрегатами по channel.
-
-11. Практические шаги (пошагово) — что вы (или я) выполняете сейчас
-
-Выполнить SQL-проверки (см. раздел 4.4).
-Создать view trials_with_rt, preferred_attempts, clean_trials.
-Экспортировать clean_trials в pandas (или CSV).
-Выполнить QC (раздел 9).
-Построить индивидуальные графики и агрегаты (разделы 7–8).
-Провести статистические тесты по заранее выбранным гипотезам (K периферия vs K центр и т.д.).
-Сформировать отчёт — per-patient + cohort summary.
-
-12. Что я могу сделать дальше (и что я сейчас предложу подготовить, если вы хотите)
-
-(Я не прошу файл сейчас — просто предлагаю готовые артефакты, которые вы сможете запустить у себя.)
-Скрипт SQL (файл) для создания view’ов trials_with_rt, preferred_attempts, clean_trials с учётом реальных имён таблиц — готовлю по вашей команде (или подставлю стандартные имена).
-Python-скрипт (Jupyter notebook) который:
-подключается к SQLite; строит clean_trials; выполняет QC; строит индивидуальные графики; считает все агрегаты; выдаёт patients_summary.csv и trial_level_clean.csv.
-Мини-отчёт шаблона (PDF/Markdown) с интерпретацией метрик и списком пациентов для ручной проверки (если возникнут аномалии).
-
-13. Краткое резюме — что важно вам сейчас
-
-Вам нужен именно pipeline «raw SQLite → clean_trials → агрегаты → визуализации/статистика». Весь необходимый набор SQL-view и Python-блоков я привёл выше.
-Я не буду перестраивать или переписывать логику исходной программы: анализ опирается только на уже записанные метаданные и поля в таблицах.
-Важно согласовать: 1) реальные имена таблиц/полей (если они отличаются) и 2) окончательное правило выбора preferred_attempt (я предложил практичную схему — её можно изменить, но нужна чёткая договорённость).
-
-
-
-ВНУТРЕННЕЕ РАБОЧЕЕ РЕЗЮМЕ ДЛЯ ПРОДОЛЖЕНИЯ ПРОЕКТА
-1. Общее назначение проекта
-Система анализа тестирования зрительных реакций (ЗР) должна:
-принимать данные трёх тестов (Tst1, Tst2, Tst3);
-обрабатывать их непараметрически;
-формировать обобщённые показатели;
-анализировать взаимодействия между тестами;
-поддерживать, латерализацию и канальную трактовку (парво/магно/конио);
-работать с уже имеющимися SQLite-базами, которые заменили Access.
-Новая документация НЕ должна дублировать поведение старой программы 20-летней давности.
-Главное — структура фактических данных и логика их обработки, а не исторические детали реализации.
-
-2. Структура данных в проекте
-Пользователь уже загрузил:
-таблицы из Access → SQLite;
-таблицы содержат:
-сырые интервалы RT;
-типы тестов;
-цветовые и позиционные характеристики;
-пол и возраст;
-вспомогательные параметры (ранние нажатия, пропуски).
-Данные доступны; их формат фиксирован; пересборка структуры не требуется.
-Моя задача — не менять структуру данных, а работать с ней:
-интерпретировать, обобщать и строить расчётные уровни.
-
-3. Суть трёх тестов (для анализа, без лишних визуальных деталей)
-Tst1 — одиночный объект
-красный круг;
-фиксированная псевдослучайная позиция;
-предстимульный интервал (ISI) задаётся конфигом;
-экспозиция тестового круга — до нажатия или 2000 мс;
-Важное: ISI (предстимульный интервал)= индивидуальное значение из метаданных.
-
-Tst2 — статическая тройка
-несколько предтестовых троек (их число фиксировано в конфиге);
-каждая предтестовая тройка показывается 400 мс;
-последняя тройка — тестовая;
-тестовый круг (красный) появляется в предустановленной позиции;
-RT отсчитывается от появления тестовой тройки.
-ISI = (число ПРЕДТЕСТОВЫХ троек) × 400 мс.
-
-Tst3 — динамическая тройка
-несколько предтестовых троек по 400 мс;
-тестовая тройка содержит три круга:
-два нетестовых — неподвижны всё время экспозиции;
-тестовый — смещается вверх (в боковых позициях) или вниз (в центральной) и возвращается;
-движение занимает 150 мс туда и обратно;
-RT отсчитывается от появления тестовой тройки (момента начала движения).
-ISI = (число ПРЕДТЕСТОВЫХ троек) × 400 мс.
-4. Текущая методика обработки реакций
-Используется MAD-отсев с централизованным управлением (testing_statistics.MAD_thresh).
-Моторная компонента не вычисляется.
-Вычмисляются:
-- время принятия решения выбора цвета - ΔV4 = СЗР на цвет - ПЗР;
-- время принятия решения на движение - ΔV5/MT = СЗР на движение  - ПЗР;
-
-Параметры, не имеющие достоверной математической основы (стабилизация, нелинейность, переходные зоны) исключены.
-
-Латерализация трактуется через каналы (V1→V4, V1→V5, koniocellular).
-
-Анализ Δ между фазами только если значим (не параметрически).
-Выбросы частично удалялись в ходе регистрации и замещались фактическми данными, полученными в аналогичных условиях, 
-в базе локализация удаленных выбросов- не отмечена. 
-5. Цель аналитического слоя
-Ты не просишь “описать тесты”, это уже сделано.
-Ты ожидаешь, что я:
-понял структуру имеющихся данных;
-могу автоматически анализировать данные каждого теста;
-могу связывать результаты разных тестов в единую батарею;
-могу строить логические деревья решений;
-могу анализировать фазовые различия;
-могу проводить латерализацию и канальную интерпретацию;
-могу делать промежуточные и финальные обобщающие модели.
-Это — главная цель, а не реконструкция старого поведения стимулятора.
-6. Что делать дальше (пошаговая дорожная карта)
-Чтобы перейти от “варки воды” к работе, нужен следующий план.
-Шаг 1 — передать мне структуру SQLite
-Ты уже сделал большую часть.
-Теперь нужно:
-схемы таблиц (или сами файлы);
-словарь полей: что означает каждая колонка;
-связь между таблицами (если есть).
-После этого я полностью перейду на анализ фактических данных, а не на реконструкцию тестов.
-Шаг 2 — передать содержание ключевых модулей проекта
-Ты предлагаешь постепенно передать: они сожержаться в репозитории NeuroTransAnalytics на GitHub^
-tapping_test.py
-timer.py
-mouse.py
-testing_statistics.py
-модули загрузки SQLite
-модули обработки RT
-Я смогу:
-реконструировать логику,
-устранить дублирование,
-построить чистую архитектурную схему,
-на базе этого — выполнять анализ данных.
-Шаг 3 — я создаю себе внутреннюю “карту проекта”
-Это то, чего тебе не хватало:
-чтобы я не забывал структуру проекта между чатами.
-То, что я написал выше — начало этой карты.
-Дальше она будет уточняться автоматически.
-Шаг 4 — построение аналитических моделей
-Когда структура данных и логика модулей будут ясны, я:
-Построю слой вычислений:
-медианы,
-MAD,
-corrected_RT,
-фазовые различия,
-латерализацию.
-Построю слой логических деревьев:
-выявление слабого звена,
-согласование ZР–tapping,
-трактовка PSI.
-Построю интегральные показатели:
-по каждому тесту,
-по батарее.
-Построю генератор отчётов и моделей.
-Шаг 5 — переход к моделированию и прогнозированию
-Финальный этап:
-моделирование вклада парво/магно/конио путей;
-моделирование фазовых нарушений;
-сравнение эмпирических результатов с моделью;
-прогнозирование оптимальных тестовых нагрузок.
-
-
-ВНУТРЕННЕЕ РАБОЧЕЕ РЕЗЮМЕ ДЛЯ ПРОДОЛЖЕНИЯ ПРОЕКТА
-1. Общее назначение проекта
-Система анализа тестирования зрительных реакций (ЗР) должна:
-принимать данные трёх тестов (Tst1, Tst2, Tst3);
-обрабатывать их непараметрически;
-формировать обобщённые показатели;
-анализировать взаимодействия между тестами;
-поддерживать, латерализацию и канальную трактовку (парво/магно/конио);
-работать с уже имеющимися SQLite-базами, которые заменили Access.
-Новая документация НЕ должна дублировать поведение старой программы 20-летней давности.
-Главное — структура фактических данных и логика их обработки, а не исторические детали реализации.
-
-2. Структура данных в проекте
-Пользователь уже загрузил:
-таблицы из Access → SQLite;
-таблицы содержат:
-сырые интервалы RT;
-типы тестов;
-цветовые и позиционные характеристики;
-пол и возраст;
-вспомогательные параметры (ранние нажатия, пропуски).
-Данные доступны; их формат фиксирован; пересборка структуры не требуется.
-Моя задача — не менять структуру данных, а работать с ней:
-интерпретировать, обобщать и строить расчётные уровни.
-
-3. Суть трёх тестов (для анализа, без лишних визуальных деталей)
-Tst1 — одиночный объект
-красный круг;
-фиксированная псевдослучайная позиция;
-предстимульный интервал (ISI) задаётся конфигом;
-экспозиция тестового круга — до нажатия или 2000 мс;
-Важное: ISI (предстимульный интервал)= индивидуальное значение из метаданных.
-
-Tst2 — статическая тройка
-несколько предтестовых троек (их число фиксировано в конфиге);
-каждая предтестовая тройка показывается 400 мс;
-последняя тройка — тестовая;
-тестовый круг (красный) появляется в предустановленной позиции;
-RT отсчитывается от появления тестовой тройки.
-ISI = (число ПРЕДТЕСТОВЫХ троек) × 400 мс.
-
-Tst3 — динамическая тройка
-несколько предтестовых троек по 400 мс;
-тестовая тройка содержит три круга:
-два нетестовых — неподвижны всё время экспозиции;
-тестовый — смещается вверх (в боковых позициях) или вниз (в центральной) и возвращается;
-движение занимает 150 мс туда и обратно;
-RT отсчитывается от появления тестовой тройки (момента начала движения).
-ISI = (число ПРЕДТЕСТОВЫХ троек) × 400 мс.
-4. Текущая методика обработки реакций
-Используется MAD-отсев с централизованным управлением (testing_statistics.MAD_thresh).
-Моторная компонента не вычисляется.
-Вычмисляются:
-- время принятия решения выбора цвета - ΔV4 = СЗР на цвет - ПЗР;
-- время принятия решения на движение - ΔV5/MT = СЗР на движение  - ПЗР;
-
-Параметры, не имеющие достоверной математической основы (стабилизация, нелинейность, переходные зоны) исключены.
-
-Латерализация трактуется через каналы (V1→V4, V1→V5, koniocellular).
-
-Анализ Δ между фазами только если значим (не параметрически).
-Выбросы частично удалялись в ходе регистрации и замещались фактическми данными, полученными в аналогичных условиях, 
-в базе локализация удаленных выбросов- не отмечена. 
-5. Цель аналитического слоя
-Ты не просишь “описать тесты”, это уже сделано.
-Ты ожидаешь, что я:
-понял структуру имеющихся данных;
-могу автоматически анализировать данные каждого теста;
-могу связывать результаты разных тестов в единую батарею;
-могу строить логические деревья решений;
-могу анализировать фазовые различия;
-могу проводить латерализацию и канальную интерпретацию;
-могу делать промежуточные и финальные обобщающие модели.
-Это — главная цель, а не реконструкция старого поведения стимулятора.
-6. Что делать дальше (пошаговая дорожная карта)
-Чтобы перейти от “варки воды” к работе, нужен следующий план.
-Шаг 1 — передать мне структуру SQLite
-Ты уже сделал большую часть.
-Теперь нужно:
-схемы таблиц (или сами файлы);
-словарь полей: что означает каждая колонка;
-связь между таблицами (если есть).
-После этого я полностью перейду на анализ фактических данных, а не на реконструкцию тестов.
-Шаг 2 — передать содержание ключевых модулей проекта
-Ты предлагаешь постепенно передать: они сожержаться в репозитории NeuroTransAnalytics на GitHub^
-tapping_test.py
-timer.py
-mouse.py
-testing_statistics.py
-модули загрузки SQLite
-модули обработки RT
-Я смогу:
-реконструировать логику,
-устранить дублирование,
-построить чистую архитектурную схему,
-на базе этого — выполнять анализ данных.
-Шаг 3 — я создаю себе внутреннюю “карту проекта”
-Это то, чего тебе не хватало:
-чтобы я не забывал структуру проекта между чатами.
-То, что я написал выше — начало этой карты.
-Дальше она будет уточняться автоматически.
-Шаг 4 — построение аналитических моделей
-Когда структура данных и логика модулей будут ясны, я:
-Построю слой вычислений:
-медианы,
-MAD,
-corrected_RT,
-фазовые различия,
-латерализацию.
-Построю слой логических деревьев:
-выявление слабого звена,
-согласование ZР–tapping,
-трактовка PSI.
-Построю интегральные показатели:
-по каждому тесту,
-по батарее.
-Построю генератор отчётов и моделей.
-Шаг 5 — переход к моделированию и прогнозированию
-Финальный этап:
-моделирование вклада парво/магно/конио путей;
-моделирование фазовых нарушений;
-сравнение эмпирических результатов с моделью;
-прогнозирование оптимальных тестовых нагрузок.
