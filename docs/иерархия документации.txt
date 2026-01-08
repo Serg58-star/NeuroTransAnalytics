@@ -4,5 +4,8 @@ README.md
 ETL_boxbase_to_visual_tests.md
 → как исторические данные превращаются в объект анализа
 
+QC_after_ETL_visual_tests
+→ Логическая спецификация контроля качества данных после ETL
+
 CHANGELOG.md
 → когда и почему это менялось
