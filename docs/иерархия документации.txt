@@ -7,5 +7,8 @@ ETL_boxbase_to_visual_tests.md
 QC_after_ETL_visual_tests
 → Логическая спецификация контроля качества данных после ETL
 
+Aggregates_minimal_after_QC
+→ Формализация первого агрегатного расчёта поверх visual_tests
+
 CHANGELOG.md
 → когда и почему это менялось
