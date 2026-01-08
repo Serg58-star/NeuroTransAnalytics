@@ -1,6 +1,9 @@
 README.md
 → что это за данные и как их можно интерпретировать
 
+Test_design_and_PSI_metadata.md
+→ Спецификация дизайна тестов СЗР и метаданных предстимульных интервалов (PSI)
+
 ETL_boxbase_to_visual_tests.md
 → как исторические данные превращаются в объект анализа
 
@@ -13,6 +16,8 @@ Aggregates_minimal_after_QC
 Aggregates_extended_after_QC
 → Расширенные агрегаты: латерализация, канальные группы, пороговые показатели
 
+Test_design_and_PSI_metadata.md
+→ Спецификация дизайна тестов и метаданных предстимульных интервалов (PSI)
 
 Relational_analysis_between_visual_tests.md
 → Логическая спецификация сравнительного анализа между зрительными тестами
