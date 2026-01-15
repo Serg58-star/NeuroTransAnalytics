@@ -1,0 +1,58 @@
+ README_addendum_summary
+ https://raw.githubusercontent.com/Serg58-star/NeuroTransAnalytics/refs/heads/main/docs/old_docs/README_addendum_summary.txt
+ 
+ README_old_1
+
+ ETL_boxbase_to_visual_tests
+
+ QC_after_ETL_visual_tests
+
+ Aggregates_minimal_after_QC
+
+ Aggregates_extended_after_QC
+
+ Relational_analysis_between_visual_tests
+
+ Test_design_and_PSI_metadata
+
+ RT_variability_analysis
+
+ CHANGELOG
+
+ иерархия документации_old
+
+ README_old_2
+
+ 2_Research_Axes_and_Test_Conditions_v1
+
+ README_2_тип_Old
+
+ 2_Research_Axes_and_Test_Conditions_v3_old
+ 
+ 5_Research_Scenarios_v4_old
+ 
+  
+ 
+
+ 
+
+ 
+
+  
+
+
+
+Aggregates_extended_after_QC
+→ Расширенные агрегаты: латерализация, канальные группы, пороговые показатели
+
+Relational_analysis_between_visual_tests.md
+→ Логическая спецификация сравнительного анализа между зрительными тестами
+
+RT_variability_analysis.md
+→ Аналитический слой оценки вариабельности скоростей зрительных реакций
+
+CHANGELOG.md
+→ когда и почему это менялось.
+Все значимые изменения проекта фиксируются в этом документе.
+Формат ориентирован на методологические и архитектурные вехи,
+а не на технические детали реализации.
