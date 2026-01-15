@@ -1,11 +1,11 @@
-БЛОК 1. Физический формат хранения
-1. В каком виде хранятся данные сейчас?
-☐ SQLite  - есть в проекте: C:\NeuroTransAnalytics\neuro_data.db, 12,4 Mb
-☐ Access (mdb / accdb)- есть в проекте:C:\NeuroTransAnalytics\data\testbase.mdb - нет данных по позиции Gender,3,79 Mb
-☐ CSV / TXT - есть в проекте:C:\NeuroTransAnalytics\data\users.csv (96 Kb) + C:\NeuroTransAnalytics\data\boxbase_csv.csv (952 Kb)
-☐ Несколько форматов - несколько форматов.
-☐ Другое: Excel: C:\NeuroTransAnalytics\data\users.xlsx (100 Kb) + C:\NeuroTransAnalytics\data\boxbase.xlsx (1.31 Mb)
-2. Это:
-единая БД - как единая база.В форматах .mdb - нет позиции Gender; в .xlsx и .csv - Gender есть, внесен вручную.
-3. Структура данных однородна,по годам не менялась?
+Пересылаю файл иерархия документации_old
 
+Он хранится также на GitHub docs/old_docs
+
+В этом файле указаны "сырые" ссылки на все документы из docs/old_docs
+
+Сначала ознакомься с 
+ README_addendum_summary
+ https://raw.githubusercontent.com/Serg58-star/NeuroTransAnalytics/refs/heads/main/docs/old_docs/README_addendum_summary.txt
+
+Потом читай в том порядке, который тебе нужен.
