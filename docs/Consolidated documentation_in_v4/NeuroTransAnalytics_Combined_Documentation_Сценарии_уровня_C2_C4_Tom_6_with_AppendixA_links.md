@@ -405,6 +405,21 @@
 
 # C2.1 — Логическая модель данных (Data Model v4)
 
+---
+
+## Appendix A — Data & Legacy Context (ссылка)
+
+См. **Appendix A — Data & Legacy Context**: `Appendix_A_Data_and_Legacy_Context.md`
+
+Ключевое содержание Appendix A:
+- источники данных (`testbase.mdb`, `users.xlsx`, `boxbase`);
+- codebook таблиц `users` и `boxbase`;
+- критические метаданные стимулов (цвет, позиция, PSI, “тройки”);
+- системные параметры тестирования;
+- контекст текущей реализации (GUI/SQLite) и правила безопасной разработки.
+
+---
+
 ## 1. Назначение документа
 
 Документ описывает **логическую модель данных версии v4** проекта *NeuroTransAnalytics*.
