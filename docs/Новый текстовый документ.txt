@@ -1,11 +1,2 @@
-Пересылаю файл иерархия документации_old
-
-Он хранится также на GitHub docs/old_docs
-
-В этом файле указаны "сырые" ссылки на все документы из docs/old_docs
-
-Сначала ознакомься с 
- README_addendum_summary
- https://raw.githubusercontent.com/Serg58-star/NeuroTransAnalytics/refs/heads/main/docs/old_docs/README_addendum_summary.txt
-
-Потом читай в том порядке, который тебе нужен.
+Продолжим объединение файлов в один по тем же правилам, что и предыдущий.
+Предлагаю название: "NeuroTransAnalytics_Combined_Documentation_Сценарии_уровня_C2_C4_Tom_6"
